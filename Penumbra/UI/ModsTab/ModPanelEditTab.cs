@@ -8,6 +8,7 @@ using Penumbra.Mods.Groups;
 using Penumbra.Mods.Manager;
 using Penumbra.Mods.Settings;
 using Penumbra.Services;
+using Penumbra.UI.Classes;
 using Penumbra.UI.ModsTab.Groups;
 
 namespace Penumbra.UI.ModsTab;
@@ -15,6 +16,7 @@ namespace Penumbra.UI.ModsTab;
 public class ModPanelEditTab(
     ModManager modManager,
     ModFileSystem fileSystem,
+    ModSelection selection,
     Services.MessageService messager,
     FilenameService filenames,
     ModExportManager modExportManager,
@@ -29,6 +31,7 @@ public class ModPanelEditTab(
     private Mod                  _mod              = null!;
     private bool                 _groupReorderMode = false;
     private IModGroup?           _draggedGroup     = null;
+    private bool                 _groupEditingLocked;
 
 
     public ReadOnlySpan<byte> Label
@@ -45,6 +48,8 @@ public class ModPanelEditTab(
 
         _leaf = (IFileSystemData<Mod>)fileSystem.Selection.Selection!;
         _mod  = _leaf.Value;
+        _groupEditingLocked = selection.Mod == _mod
+            && (selection.TemporarySettings?.Lock ?? 0) > 0;
 
         EditButtons();
         EditRegularMeta();
@@ -80,6 +85,13 @@ public class ModPanelEditTab(
         UiHelpers.DefaultLineSpace();
         if (Im.Tree.Header("Group Editing"u8))
         {
+            if (_groupEditingLocked)
+            {
+                DrawGroupEditingLockWarning();
+                UiHelpers.DefaultLineSpace();
+            }
+
+            using var disabled = Im.Disabled(_groupEditingLocked);
             UiHelpers.DefaultLineSpace();
             addGroupDrawer.Draw(_mod, UiHelpers.InputTextWidth.X);
             UiHelpers.DefaultLineSpace();
@@ -145,7 +157,8 @@ public class ModPanelEditTab(
             {
                 if (target.IsDropping("##group"u8) && _draggedGroup is not null)
                 {
-                    modManager.OptionEditor.MoveModGroup(_draggedGroup, i);
+                    if (!_groupEditingLocked)
+                        modManager.OptionEditor.MoveModGroup(_draggedGroup, i);
                     _draggedGroup = null;
                 }
             }
@@ -158,16 +171,36 @@ public class ModPanelEditTab(
             table.NextColumn();
             Im.Item.SetNextWidth(2 * Im.Style.FrameHeight);
             if (ImEx.InputOnDeactivation.Scalar("##prio"u8, group.Priority.Value, out var newPriority))
-                modManager.OptionEditor.ChangeGroupPriority(group, new ModPriority(newPriority));
+            {
+                if (!_groupEditingLocked)
+                    modManager.OptionEditor.ChangeGroupPriority(group, new ModPriority(newPriority));
+            }
             Im.Line.SameInner();
             if (ImEx.Icon.Button(LunaStyle.DeleteIcon, "Delete this option group."u8, !active))
-                deletion = group;
+            {
+                if (!_groupEditingLocked)
+                    deletion = group;
+            }
 
             if (!active)
                 Im.Tooltip.OnHover(HoveredFlags.AllowWhenDisabled, $"Hold {config.DeleteModModifier} to delete.");
         }
         if (deletion is not null)
-            modManager.OptionEditor.DeleteModGroup(deletion);
+        {
+            if (!_groupEditingLocked)
+                modManager.OptionEditor.DeleteModGroup(deletion);
+        }
+    }
+
+    private void DrawGroupEditingLockWarning()
+    {
+        if (!_groupEditingLocked)
+            return;
+
+        using var color =
+            ImGuiColor.Button.Push(Rgba32.TintColor(Im.Style[ImGuiColor.Button], ColorId.TemporaryModSettingsTint.Value().ToVector()));
+        var width = Im.ContentRegion.Available with { Y = 0 };
+        ImEx.Button($"These settings are temporarily set by {selection.TemporarySettings!.Source} and locked.", width, true);
     }
 
     /// <summary> The general edit row for non-detailed mod edits. </summary>

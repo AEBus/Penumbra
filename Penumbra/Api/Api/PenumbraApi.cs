@@ -15,7 +15,7 @@ public class PenumbraApi(
     UiApi ui) : IDisposable, Luna.IApiService, IPenumbraApi
 {
     public const int BreakingVersion = 5;
-    public const int FeatureVersion  = 15;
+    public const int FeatureVersion  = 17;
 
     public void Dispose()
     {

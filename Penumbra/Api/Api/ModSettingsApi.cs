@@ -16,18 +16,21 @@ namespace Penumbra.Api.Api;
 
 public class ModSettingsApi : IPenumbraApiModSettings, IApiService, IDisposable
 {
+    private readonly ApiHelpers          _apiHelpers;
     private readonly CollectionResolver  _collectionResolver;
     private readonly ModManager          _modManager;
     private readonly CollectionManager   _collectionManager;
     private readonly CollectionEditor    _collectionEditor;
     private readonly CommunicatorService _communicator;
 
-    public ModSettingsApi(CollectionResolver collectionResolver,
+    public ModSettingsApi(ApiHelpers apiHelpers,
+        CollectionResolver collectionResolver,
         ModManager modManager,
         CollectionManager collectionManager,
         CollectionEditor collectionEditor,
         CommunicatorService communicator)
     {
+        _apiHelpers         = apiHelpers;
         _collectionResolver = collectionResolver;
         _modManager         = modManager;
         _collectionManager  = collectionManager;
@@ -177,6 +180,57 @@ public class ModSettingsApi : IPenumbraApiModSettings, IApiService, IDisposable
             ? PenumbraApiEc.Success
             : PenumbraApiEc.NothingChanged;
         return ApiHelpers.Return(ret, args);
+    }
+
+    public (PenumbraApiEc, int?) TryGetModGroupPriority(string modDirectory, string modName, string optionGroupName)
+    {
+        var args = ApiHelpers.Args("ModDirectory", modDirectory, "ModName", modName, "OptionGroupName", optionGroupName);
+
+        if (!_modManager.TryGetMod(modDirectory, modName, out var mod))
+            return (ApiHelpers.Return(PenumbraApiEc.ModMissing, args), null);
+
+        var groupIdx = mod.Groups.IndexOf(g => g.Name == optionGroupName);
+        if (groupIdx < 0)
+            return (ApiHelpers.Return(PenumbraApiEc.OptionGroupMissing, args), null);
+
+        return (ApiHelpers.Return(PenumbraApiEc.Success, args), mod.Groups[groupIdx].Priority.Value);
+    }
+
+    public PenumbraApiEc TrySetModGroupPriority(string modDirectory, string modName, string optionGroupName, int priority)
+    {
+        var args = ApiHelpers.Args("ModDirectory", modDirectory, "ModName", modName, "OptionGroupName", optionGroupName, "Priority", priority);
+
+        if (!_modManager.TryGetMod(modDirectory, modName, out var mod))
+            return ApiHelpers.Return(PenumbraApiEc.ModMissing, args);
+
+        var groupIdx = mod.Groups.IndexOf(g => g.Name == optionGroupName);
+        if (groupIdx < 0)
+            return ApiHelpers.Return(PenumbraApiEc.OptionGroupMissing, args);
+
+        var group = mod.Groups[groupIdx];
+        var newPriority = new ModPriority(priority);
+        if (group.Priority == newPriority)
+            return ApiHelpers.Return(PenumbraApiEc.NothingChanged, args);
+
+        _modManager.OptionEditor.ChangeGroupPriority(group, newPriority);
+        return ApiHelpers.Return(PenumbraApiEc.Success, args);
+    }
+
+    public PenumbraApiEc NotifyTemporaryModSettingsChangedPlayer(int objectIndex, string modDirectory, string modName)
+    {
+        var args = ApiHelpers.Args("ObjectIndex", objectIndex, "ModDirectory", modDirectory, "ModName", modName);
+        if (!_apiHelpers.AssociatedCollection(objectIndex, out var playerCollection))
+            return ApiHelpers.Return(PenumbraApiEc.InvalidArgument, args);
+
+        if (!_modManager.TryGetMod(modDirectory, modName, out var mod))
+            return ApiHelpers.Return(PenumbraApiEc.ModMissing, args);
+
+        var currentCollection = _collectionManager.Active.Current;
+        _communicator.ModSettingChanged.Invoke(
+            new ModSettingChanged.Arguments(ModSettingChange.TemporarySetting, currentCollection, mod, Setting.Indefinite, 0, false));
+        _communicator.ModSettingChanged.Invoke(
+            new ModSettingChanged.Arguments(ModSettingChange.Priority, playerCollection, mod, Setting.Indefinite, 0, false));
+        return ApiHelpers.Return(PenumbraApiEc.Success, args);
     }
 
     public PenumbraApiEc TrySetModSetting(Guid collectionId, string modDirectory, string modName, string optionGroupName, string optionName)
